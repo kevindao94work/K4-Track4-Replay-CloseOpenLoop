@@ -117,12 +117,42 @@ def replay(segs, make_stream, mode="fastest", cost_seed=0, spike_prob=0.02, base
 def compare_with_tol(golden, new, atol=1e-3, rtol=1e-3):
     """Segment-by-segment comparison. A segment 'differs' if any command is outside atol + rtol * |golden|.
     Also reports how many segments are not bit-identical, to show why exact equality is the wrong test."""
-    # TODO (Bước 1): hãy tự cài hàm này. Gợi ý:
-    #   golden và new có shape (n_seg, T), NaN ở phần đệm. Một đoạn 'lệch' nếu có lệnh nào vượt atol + rtol
-    #   * |golden|. Hai NaN ở cùng vị trí coi là bằng nhau. Trả dict có đúng các khoá: segments,
-    #   differ_beyond_tol, not_bit_identical (số đoạn không giống TỪNG BIT), max_abs_diff, atol, rtol,
-    #   differing_segments (tối đa 20 chỉ số đầu, dạng list).
-    raise NotImplementedError("TODO compare_with_tol: xem GUIDE.md, Bước 1")
+    golden = np.asarray(golden)
+    new = np.asarray(new)
+    if golden.shape != new.shape or golden.ndim != 2:
+        raise ValueError("golden and new must have the same two-dimensional shape")
+
+    differing = []
+    not_bit_identical = 0
+    max_abs_diff = 0.0
+    for i, (g, x) in enumerate(zip(golden, new)):
+        both_nan = np.isnan(g) & np.isnan(x)
+        if g.dtype == x.dtype:
+            g_bits = np.ascontiguousarray(g).view(np.uint8).reshape(-1, g.dtype.itemsize)
+            x_bits = np.ascontiguousarray(x).view(np.uint8).reshape(-1, x.dtype.itemsize)
+            bit_equal = np.all(g_bits == x_bits, axis=1) | both_nan
+            bit_identical = bool(np.all(bit_equal))
+        else:
+            bit_identical = False
+        if not bit_identical:
+            not_bit_identical += 1
+
+        finite = np.isfinite(g) & np.isfinite(x)
+        within_tol = finite & (np.abs(g - x) <= (atol + rtol * np.abs(g)))
+        outside = ~(both_nan | (g == x) | within_tol)
+        if np.any(outside):
+            differing.append(i)
+
+        nonfinite_mismatch = ~finite & ~both_nan & (g != x)
+        if np.any(nonfinite_mismatch):
+            max_abs_diff = float("inf")
+        elif np.any(finite):
+            segment_max = float(np.max(np.abs(g[finite] - x[finite])))
+            max_abs_diff = max(max_abs_diff, segment_max)
+
+    return {"segments": int(golden.shape[0]), "differ_beyond_tol": len(differing),
+            "not_bit_identical": not_bit_identical, "max_abs_diff": max_abs_diff,
+            "atol": atol, "rtol": rtol, "differing_segments": differing[:20]}
 
 
 def summation_order_demo(n=1_000_000, seed=0):
